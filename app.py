@@ -99,7 +99,6 @@ if iframe_check:
         '<a href="https://tree-qr-web-app-fzfpztpi2uljavupjh4zde.streamlit.app" target="_blank" style="font-size:18px;">🔗 Click here to open in a new tab and enable GPS</a>',
         unsafe_allow_html=True
     )
-
 else:
     st.success("✅ Fullscreen mode detected. GPS should work normally.")
 
@@ -153,7 +152,10 @@ if st.session_state.qr_result:
                 except Exception as e:
                     st.error(f"📍 GPS error: {e}")
         else:
-            st.info("📍 GPS is disabled in iframe mode. [Open app in new tab](https://tree-qr-web-app-fzfpztpi2uljavupjh4zde.streamlit.app) to enable.", unsafe_allow_html=True)
+            st.markdown(
+                '<div style="background-color:#f0f2f6;padding:1rem;border-left:5px solid #4b8bbe;">📍 GPS is disabled in iframe mode.<br><a href="https://tree-qr-web-app-fzfpztpi2uljavupjh4zde.streamlit.app" target="_blank">🔗 Open app in a new tab to enable GPS</a></div>',
+                unsafe_allow_html=True
+            )
 
 # 3. Fill Tree Details
 existing_ids = [entry["ID"].lower() for entry in st.session_state.entries]
@@ -163,10 +165,19 @@ if qr_id and qr_id not in existing_ids:
     st.header("3. Fill Tree Details")
     with st.form("tree_form"):
         id_val = st.text_input("Tree ID", value=st.session_state.qr_result)
-        tree_type = st.selectbox("Tree Type", ["A - Hibiscus/Hibiscus rosa-sinensis", "B -  Rubber tree/Hevea brasiliensis", "C - Mango tree/Mangifera indica", "D - Jackfruit tree/Artocarpus heterophyllus", "E - Merbau/Intsia palembanica"])
+        tree_type = st.selectbox("Tree Type", [
+            "A - Hibiscus/Hibiscus rosa-sinensis",
+            "B -  Rubber tree/Hevea brasiliensis",
+            "C - Mango tree/Mangifera indica",
+            "D - Jackfruit tree/Artocarpus heterophyllus",
+            "E - Merbau/Intsia palembanica"
+        ])
         height = st.text_input("Height (cm)")
         canopy = st.text_input("Canopy Diameter (cm)")
-        iucn_status = st.selectbox("IUCN Status", ["Not Evaluated", "Data Deficient", "Least Concern", "Near Threatened", "Vulnerable", "Endangered", "Critically Endangered", "Extinct in the Wild", "Extinct"])
+        iucn_status = st.selectbox("IUCN Status", [
+            "Not Evaluated", "Data Deficient", "Least Concern", "Near Threatened", "Vulnerable",
+            "Endangered", "Critically Endangered", "Extinct in the Wild", "Extinct"
+        ])
         classification = st.selectbox("Classification", ["Native", "Non-native"])
         csp = st.selectbox("CSP", ["0%~20%", "21%~40%", "41%~60%", "61%~80%", "81%~100%"])
         tree_image = st.file_uploader("Upload Tree Image", type=["jpg", "jpeg", "png"], key="tree")
