@@ -1,0 +1,12 @@
+streamlit
+opencv-python-headless
+numpy
+Pillow
+gspread
+oauth2client
+pandas
+openpyxl
+PyDrive
+streamlit-js-eval
+bokeh
+streamlit-bokeh-events
