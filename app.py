@@ -122,7 +122,25 @@ with st.form("tree_form"):
     tree_custom_name = f"GGN/25/{tree_name_suffix}"
     st.markdown(f"🔖 **Full Tree Name:** `{tree_custom_name}`")
 
-    tree_name = st.selectbox("Tree Name", [...])  # your tree list here
+    tree_name = st.selectbox("Tree Name", [
+        "Alstonia angustiloba", "Aquilaria malaccensis", "Azadirachta indica",
+        "Baringtonia acutangula", "Buchanania arborescens", "Callophyllum inophyllum",
+        "Cerbera odollam rubra", "Cinnamomum iners", "Coccoloba uvifera",
+        "Cratoxylum chochinchinensis", "Cratoxylum cochichinensis", "Cratoxylum formosum",
+        "Dillenia indica", "Diospyros blancoi", "Diptercarpus baudi", "Diptercarpus gracilis",
+        "Dyera costulata", "Eleocarpus grandiflorus", "Ficus lyrata",
+        "Filicium decipiens", "Garcinia hombroniana", "Gardenia carinata",
+        "Heteropanax fragrans", "Hopea ferrea", "Hopea odorata",
+        "Leptospermum brachyandrum", "Licuala grandis", "Maniltoa browneoides",
+        "Mesua ferrea", "Michelia champaka", "Millingtonia hortensis",
+        "Millettia pinnata", "Mimusops elengi", "Pentaspadon motleyi",
+        "Podocarpus macrophyllus", "Podocarpus polystachyus", "Pometia pinnata",
+        "Saraca thaipingensis", "Shorea roxburghii", "Spathodea campanulata",
+        "Sterculia foetida", "Sterculia parviflora", "Syzygium polyanthum",
+        "Syzygium grande", "Syzygium spicata", "Tabebuia argentea",
+        "Tabebuia rosea", "Terminalia calamansanai", "Terminalia catappa",
+        "Tristania obovata", "Tristaniopsis whiteana", "Unknown sp", "Mixed sp"
+    ]))  
     overall_height = st.selectbox("Overall Height (m)", ["1", "2", "3", "4", "5", "6", "7"])
     dbh = st.selectbox("DBH (cm)", ["1", "2", "3", "4", "5", "6", "7", "8", "9"])
     canopy = st.text_input("Canopy Diameter (cm)")
