@@ -1,18 +1,18 @@
 import streamlit as st
 import cv2
 import numpy as np
+from PIL import Image
 import os
 import re
-import json
 import gspread
-from PIL import Image
+from streamlit_js_eval import get_geolocation
 from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 from openpyxl import Workbook
-from openpyxl.drawing.image import Image as XLImage
 import pandas as pd
-from pydrive.auth import GoogleAuth
-from pydrive.drive import GoogleDrive
-from streamlit_js_eval import streamlit_js_eval
+from datetime import datetime
 
 # Setup folders
 IMAGE_DIR = "tree_images"
@@ -23,14 +23,16 @@ os.makedirs(EXPORT_DIR, exist_ok=True)
 # Google Sheets and Drive Setup
 SHEET_NAME = "TreeQRDatabase"
 GOOGLE_DRIVE_FOLDER_ID = "1iddkNU3O1U6bsoHge1m5a-DDZA_NjSVz"
-creds_dict = json.loads(st.secrets["CREDS_JSON"])
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+
+creds_dict = st.secrets["CREDS_JSON"]
+scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 
-gauth = GoogleAuth()
-gauth.credentials = creds
-drive = GoogleDrive(gauth)
+# Modern auth for Google API client
+modern_creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=scope)
+drive_service = build("drive", "v3", credentials=modern_creds)
 
 def get_worksheet():
     return client.open(SHEET_NAME).sheet1
@@ -40,198 +42,149 @@ def load_entries_from_gsheet():
     rows = sheet.get_all_values()[1:]
     entries = []
     for row in rows:
-        entry = {
-            "ID": row[0], "Type": row[1], "Height": row[2], "Canopy": row[3],
-            "IUCN": row[4], "Classification": row[5], "CSP": row[6], "Image": row[7]
-        }
-        if len(row) > 9:
-            entry["Latitude"] = row[8]
-            entry["Longitude"] = row[9]
-        else:
-            entry["Latitude"] = ""
-            entry["Longitude"] = ""
-        entries.append(entry)
+        if len(row) >= 7:
+            entries.append({
+                "Tree Name": row[0], "Name": row[1],
+                "Overall Height": row[2], "DBH": row[3], "Canopy": row[4],
+                "Latitude": row[5], "Longitude": row[6]
+            })
     return entries
 
 def save_to_gsheet(entry):
     sheet = get_worksheet()
     sheet.append_row([
-        entry["ID"], entry["Type"], entry["Height"], entry["Canopy"],
-        entry["IUCN"], entry["Classification"], entry["CSP"], entry["Image"],
+        entry["Tree Name"], entry["Name"],
+        entry["Overall Height"], entry["DBH"], entry["Canopy"],
         entry.get("Latitude", ""), entry.get("Longitude", "")
     ])
 
 def upload_image_to_drive(image_file, filename):
     with open(filename, "wb") as f:
         f.write(image_file.read())
-    file_drive = drive.CreateFile({"title": filename, "parents": [{"id": GOOGLE_DRIVE_FOLDER_ID}]})
-    file_drive.SetContentFile(filename)
-    file_drive.Upload()
-    file_drive.InsertPermission({
-        'type': 'anyone',
-        'value': 'anyone',
-        'role': 'reader'
-    })
-    os.remove(filename)
-    return f"https://drive.google.com/uc?id={file_drive['id']}"
 
-# Session state
-if "entries" not in st.session_state:
-    st.session_state.entries = load_entries_from_gsheet()
-if "qr_result" not in st.session_state:
-    st.session_state.qr_result = ""
-if "qr_status" not in st.session_state:
-    st.session_state.qr_status = None
-if "coords" not in st.session_state:
-    st.session_state.coords = {}
-if "iframe_mode" not in st.session_state:
-    st.session_state.iframe_mode = None
+    file_metadata = {
+        "name": os.path.basename(filename),
+        "parents": [GOOGLE_DRIVE_FOLDER_ID]
+    }
+    media = MediaFileUpload(filename, mimetype="image/jpeg")
+    file = drive_service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+
+    # Make public
+    drive_service.permissions().create(
+        fileId=file["id"],
+        body={"type": "anyone", "role": "reader"},
+    ).execute()
+
+    os.remove(filename)
+    return f"https://drive.google.com/uc?id={file['id']}"
+
+# Session state setup
+for key in ["latitude", "longitude", "location_requested", "session_entries", "qr_image"]:
+    if key not in st.session_state:
+        st.session_state[key] = None if key != "session_entries" else []
 
 st.title("🌳 Tree QR Scanner")
 
-# Detect iframe environment
-iframe_check = streamlit_js_eval(js_expressions="window.self !== window.top", key="iframe_check")
-st.session_state.iframe_mode = iframe_check
-
-if iframe_check:
-    st.warning("⚠️ This app is running inside another website or app (iframe mode). GPS features may not work.")
-    st.markdown(
-        '<a href="https://tree-qr-web-app-fzfpztpi2uljavupjh4zde.streamlit.app" target="_blank" style="font-size:18px;">🔗 Click here to open in a new tab and enable GPS</a>',
-        unsafe_allow_html=True
-    )
-else:
-    st.success("✅ Fullscreen mode detected. GPS should work normally.")
-
-# 1. Capture QR Code
-st.header("1. Capture QR Code (Camera Input)")
-captured = st.camera_input("📸 Take a photo of the QR code")
-
+# 1. QR Capture
+st.header("1. Capture QR Code Photo")
+captured = st.camera_input("📸 Take a photo of the QR code (no scanning required)")
 if captured:
-    file_bytes = np.asarray(bytearray(captured.read()), dtype=np.uint8)
-    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    detector = cv2.QRCodeDetector()
-    data, bbox, _ = detector.detectAndDecode(img)
+    st.session_state.qr_image = captured
+    st.success("✅ QR image captured.")
 
-    if data:
-        data = data.strip()
-        st.session_state.qr_result = data
-        existing_ids = [entry["ID"].lower() for entry in st.session_state.entries]
-        st.session_state.qr_status = "duplicate" if data.lower() in existing_ids else "unique"
+# 2. GPS Capture
+st.header("2. Capture GPS Location")
+if st.button("Get Location"):
+    st.session_state.location_requested = True
+
+if st.session_state.location_requested:
+    location = get_geolocation()
+    if location:
+        coords = location.get("coords", {})
+        st.session_state.latitude = coords.get("latitude")
+        st.session_state.longitude = coords.get("longitude")
+        st.success("📡 Location captured!")
     else:
-        st.error("❌ No QR code detected.")
+        st.info("📍 Waiting for browser permission or location data...")
 
-# 2. QR Status and GPS
-if st.session_state.qr_result:
-    st.header("2. QR Code Status and GPS Location")
+if st.session_state.latitude is not None and st.session_state.longitude is not None:
+    st.write(f"📍 Latitude: `{st.session_state.latitude}`")
+    st.write(f"📍 Longitude: `{st.session_state.longitude}`")
+elif st.session_state.location_requested:
+    st.info("📍 Waiting for browser permission or location data...")
+else:
+    st.info("⚠️ Click 'Get Location' to capture coordinates.")
 
-    if st.session_state.qr_status == "duplicate":
-        st.error(f"🚫 QR Code ID '{st.session_state.qr_result}' already exists in the system.")
-    elif st.session_state.qr_status == "unique":
-        st.success(f"✅ QR Code Found: {st.session_state.qr_result} (ID is unique)")
+# 3. Tree Data Form
+st.header("3. Fill Tree Details")
+with st.form("tree_form"):
+    tree_name_suffix = st.text_input("Tree Name (Suffix only)")
+    tree_custom_name = f"GGN/25/{tree_name_suffix}"
+    st.markdown(f"🔖 **Full Tree Name:** `{tree_custom_name}`")
 
-        if st.session_state.coords:
-            lat = st.session_state.coords.get("latitude", "")
-            lon = st.session_state.coords.get("longitude", "")
-            st.info(f"📍 Current Location: **Lat:** {lat}, **Long:** {lon}")
+    tree_name = st.selectbox("Tree Name", [...])  # your tree list here
+    overall_height = st.selectbox("Overall Height (m)", ["1", "2", "3", "4", "5", "6", "7"])
+    dbh = st.selectbox("DBH (cm)", ["1", "2", "3", "4", "5", "6", "7", "8", "9"])
+    canopy = st.text_input("Canopy Diameter (cm)")
 
-        if not iframe_check:
-            if st.button("📍 Get Location"):
-                try:
-                    with st.spinner("Fetching GPS location..."):
-                        pos = streamlit_js_eval(
-                            js_expressions='new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject))',
-                            key="get_coords"
-                        )
-                    if pos and "coords" in pos:
-                        lat = pos["coords"]["latitude"]
-                        lon = pos["coords"]["longitude"]
-                        st.session_state.coords = {"latitude": lat, "longitude": lon}
-                        st.success(f"📍 Location captured: {lat}, {lon}")
-                    else:
-                        st.warning("⚠️ GPS request sent but no location returned. Try again.")
-                except Exception as e:
-                    st.error(f"📍 GPS error: {e}")
-        else:
-            st.markdown(
-                '<div style="background-color:#f0f2f6;padding:1rem;border-left:5px solid #4b8bbe;">📍 GPS is disabled in iframe mode.<br><a href="https://tree-qr-web-app-fzfpztpi2uljavupjh4zde.streamlit.app" target="_blank">🔗 Open app in a new tab to enable GPS</a></div>',
-                unsafe_allow_html=True
-            )
+    submitted = st.form_submit_button("Add Entry")
 
-# 3. Fill Tree Details
-existing_ids = [entry["ID"].lower() for entry in st.session_state.entries]
-qr_id = st.session_state.qr_result.lower() if st.session_state.qr_result else ""
+if submitted:
+    latest_entries = load_entries_from_gsheet()
+    latest_tree_names = [entry["Tree Name"].strip().upper() for entry in latest_entries]
 
-if qr_id and qr_id not in existing_ids:
-    st.header("3. Fill Tree Details")
-    with st.form("tree_form"):
-        id_val = st.text_input("Tree ID", value=st.session_state.qr_result)
-        tree_type = st.selectbox("Tree Type", [
-            "A - Hibiscus/Hibiscus rosa-sinensis",
-            "B -  Rubber tree/Hevea brasiliensis",
-            "C - Mango tree/Mangifera indica",
-            "D - Jackfruit tree/Artocarpus heterophyllus",
-            "E - Merbau/Intsia palembanica"
-        ])
-        height = st.text_input("Height (cm)")
-        canopy = st.text_input("Canopy Diameter (cm)")
-        iucn_status = st.selectbox("IUCN Status", [
-            "Not Evaluated", "Data Deficient", "Least Concern", "Near Threatened", "Vulnerable",
-            "Endangered", "Critically Endangered", "Extinct in the Wild", "Extinct"
-        ])
-        classification = st.selectbox("Classification", ["Native", "Non-native"])
-        csp = st.selectbox("CSP", ["0%~20%", "21%~40%", "41%~60%", "61%~80%", "81%~100%"])
-        tree_image = st.file_uploader("Upload Tree Image", type=["jpg", "jpeg", "png"], key="tree")
+    if tree_custom_name.strip().upper() in latest_tree_names:
+        st.error("❌ This Tree Name already exists.")
+    elif not all([tree_name, overall_height, dbh, canopy]):
+        st.error("❌ Please complete all fields.")
+    elif st.session_state.latitude is None or st.session_state.longitude is None:
+        st.error("❌ GPS location is missing.")
+    else:
+        qr_filename = os.path.join(IMAGE_DIR, f"GGN_25_{tree_name_suffix}_QR.jpg")
+        if st.session_state.qr_image:
+            image_url = upload_image_to_drive(st.session_state.qr_image, qr_filename)
+            st.success(f"📸 QR image uploaded successfully.")
 
-        submitted = st.form_submit_button("Add Entry")
-        if submitted:
-            if not all([id_val, tree_type, height, canopy, iucn_status, classification, csp, tree_image]):
-                st.error("❌ Please complete all fields.")
-            elif not height.isdigit() or not canopy.isdigit():
-                st.error("❌ Height and Canopy Diameter must be numeric.")
-            elif id_val.lower() in [entry["ID"].lower() for entry in st.session_state.entries]:
-                st.error("🚫 A tree with this ID already exists. Please enter a unique Tree ID.")
-            else:
-                safe_id = re.sub(r'[^a-zA-Z0-9_-]', '_', id_val)
-                _, ext = os.path.splitext(tree_image.name)
-                filename = f"{safe_id}{ext}"
-                image_url = upload_image_to_drive(tree_image, filename)
-                entry = {
-                    "ID": id_val,
-                    "Type": tree_type,
-                    "Height": height,
-                    "Canopy": canopy,
-                    "IUCN": iucn_status,
-                    "Classification": classification,
-                    "CSP": csp,
-                    "Image": image_url,
-                    "Latitude": st.session_state.coords.get("latitude", ""),
-                    "Longitude": st.session_state.coords.get("longitude", "")
-                }
-                st.session_state.entries.append(entry)
-                save_to_gsheet(entry)
-                st.success("✅ Entry added and image saved!")
+        entry = {
+            "Tree Name": tree_custom_name,
+            "Name": tree_name,
+            "Overall Height": overall_height,
+            "DBH": dbh,
+            "Canopy": canopy,
+            "Latitude": st.session_state.latitude,
+            "Longitude": st.session_state.longitude
+        }
+        st.session_state.session_entries.append(entry)
+        try:
+            save_to_gsheet(entry)
+            st.success("✅ Entry added and image saved!")
+        except Exception as e:
+            st.error(f"❌ Error saving to Google Sheet: {e}")
 
-# 4. Current Entries
-if st.session_state.entries:
-    st.header("4. Current Entries")
-    df = pd.DataFrame(st.session_state.entries)
+        # Reset state
+        st.session_state.latitude = None
+        st.session_state.longitude = None
+        st.session_state.location_requested = False
+        st.session_state.qr_image = None
+
+# 4. Show Session Data
+if st.session_state.session_entries:
+    st.header("4. Your Entries This Session")
+    df = pd.DataFrame(st.session_state.session_entries)
     st.dataframe(df)
 
-# 5. Export
-if st.session_state.entries:
-    st.header("5. Export Data")
-    csv_data = pd.DataFrame(st.session_state.entries).to_csv(index=False).encode("utf-8")
-    st.download_button("Download CSV", csv_data, "tree_data.csv", "text/csv")
+    csv_data = df.to_csv(index=False).encode("utf-8")
+    st.download_button("📥 Download CSV", csv_data, "tree_data.csv", "text/csv")
 
-    if st.button("Download Excel with Images"):
-        path = os.path.join(EXPORT_DIR, "tree_data.xlsx")
+    if st.button("📥 Download Excel with Images"):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(EXPORT_DIR, f"tree_data_{timestamp}.xlsx")
         wb = Workbook()
         ws = wb.active
-        headers = ["ID", "Type", "Height", "Canopy", "IUCN", "Classification", "CSP", "Image", "Latitude", "Longitude"]
+        headers = ["Tree Name", "Name", "Overall Height", "DBH", "Canopy", "Latitude", "Longitude"]
         ws.append(headers)
-        for i, entry in enumerate(st.session_state.entries, start=2):
+        for entry in st.session_state.session_entries:
             ws.append([entry.get(k, "") for k in headers])
-            ws.cell(row=i, column=8).value = f'=HYPERLINK("{entry["Image"]}", "View Image")'
         wb.save(path)
         with open(path, "rb") as f:
-            st.download_button("Download Excel File", f, "tree_data.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button("Download Excel File", f, f"tree_data_{timestamp}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
