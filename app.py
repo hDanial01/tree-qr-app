@@ -140,7 +140,7 @@ with st.form("tree_form"):
         "Syzygium grande", "Syzygium spicata", "Tabebuia argentea",
         "Tabebuia rosea", "Terminalia calamansanai", "Terminalia catappa",
         "Tristania obovata", "Tristaniopsis whiteana", "Unknown sp", "Mixed sp"
-    ]))  
+    ])  
     overall_height = st.selectbox("Overall Height (m)", ["1", "2", "3", "4", "5", "6", "7"])
     dbh = st.selectbox("DBH (cm)", ["1", "2", "3", "4", "5", "6", "7", "8", "9"])
     canopy = st.text_input("Canopy Diameter (cm)")
